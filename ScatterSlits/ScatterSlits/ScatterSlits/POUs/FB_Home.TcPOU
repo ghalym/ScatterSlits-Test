@@ -1,0 +1,220 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.3">
+  <POU Name="FB_Home" Id="{a1f86d0c-e53d-4271-aba2-4676f7326229}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_Home
+VAR_IN_OUT
+	Axis :AXIS_REF;
+	fbPowerAxis : MC_POWER;
+END_VAR
+VAR_INPUT
+	bHome: Bool;
+END_VAR
+VAR
+	
+
+	// Homing Functions
+	bGo:BOOL := FALSE; //to execute motion
+	bIsHomed:BOOL :=FALSE; // should be set to true
+	bEnable:Bool; //to be removed
+	fbMoveRel: MC_MoveRelative;
+	fbSetPosition: MC_SetPosition;
+	fbWriteParameter: MC_WriteBoolParameter;
+	HomeState: E_HomeState;
+	
+	fbReset: MC_Reset;
+	rHomingDistance : REAL :=-1; 
+	rHomingVelocity : REAL :=0.1;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+
+CASE HomeState OF
+	H_READY:
+		fbSetPosition.Execute := FALSE;
+		fbWriteParameter.Execute := FALSE;
+		fbMoveRel.Execute := FALSE;
+		
+		IF (bHome) THEN 
+			bHome := FALSE;
+			HomeState := H_INIT; 
+		END_IF;
+	
+	H_INIT:
+	HomeState:=H_RESET_LL;
+
+		
+	H_RESET_LL:
+		// disable soft limits in order to be able to move the drive
+		fbWriteParameter.ParameterNumber := MC_AxisParameter.EnableLimitNeg;
+		fbWriteParameter.Value := FALSE;
+		fbWriteParameter.Execute := TRUE;
+		if (fbWriteParameter.Done) THEN
+			fbWriteParameter.Execute := FALSE;
+			HomeState:= H_RESET_HL; 
+		END_IF
+		
+	H_RESET_HL:
+		// disable soft limits in order to be able to move the drive
+		fbWriteParameter.ParameterNumber := MC_AxisParameter.EnableLimitPos;
+		fbWriteParameter.Value := FALSE;
+		fbWriteParameter.Execute := TRUE;
+		if (fbWriteParameter.Done) THEN
+			fbWriteParameter.Execute := FALSE;
+			HomeState:= H_ENABLE; 
+		END_IF
+		
+	H_ENABLE:
+		// Make Sure drive is enabled
+		fbPowerAxis.Enable :=  TRUE;
+		fbPowerAxis.Enable_Positive := TRUE;
+		fbPowerAxis.Enable_Negative := TRUE;
+		IF fbPowerAxis.Status THEN
+			HomeState:= H_MOVING;
+		ELSIF fbPowerAxis.Error THEN
+			HomeState := H_ERROR;
+		END_IF
+
+	H_MOVING:
+		fbMoveRel.Execute := TRUE;
+		IF fbMoveRel.Active  THEN
+			(* axis is executing job but is not yet finished *)
+			fbMoveRel.Execute := FALSE;
+			(* leave this state and buffer a second command *)
+			HomeState := H_MOVING2;
+		ElSIF fbMoveRel.Done THEN
+			fbMoveRel.Execute := FALSE;
+			HomeState := H_MOVING;//2?
+		ELSIF fbMoveRel.CommandAborted OR fbMoveRel.Error THEN
+			fbMoveRel.Execute := FALSE;
+			HomeState := H_CHECK;
+		END_IF
+	
+	H_MOVING2:
+		IF fbMoveRel.CommandAborted OR fbMoveRel.Error THEN
+			HomeState := H_CHECK;
+		END_IF	
+		IF NOT ( Axis.Status.Moving) OR (fbMoveRel.Done) THEN //(fbMoveAxisABS.Done) AND (fbMoveAxisABS2.Done) THEN
+			HomeState := H_MOVING;
+			fbMoveRel.Execute := FALSE;	
+		END_IF
+	
+	H_CHECK:
+		// Check negative limit switch
+		IF NOT (fbPowerAxis.Enable_Negative) THEN
+			fbReset.Execute := TRUE;
+			HomeState := H_RESET;
+		ELSE
+			HomeState := H_ERROR;
+		END_IF
+		//Check position lag monitoring error
+		(*if (Axis.Status.ErrorID = 16#00004550)THEN 
+			//This^.q_stVGP.pv_xReset_SW := TRUE;
+			HomeState := H_RESET;
+		ELSE
+			HomeState := H_ERROR;
+		END_IF*)
+	
+	H_RESET:
+		IF fbReset.Done THEN
+			HomeState := H_SET_POS;
+		END_IF
+	
+	H_SET_POS:
+	 // Set Current Position
+		fbSetPosition.Position := 0;
+		fbSetPosition.Execute := TRUE;
+		IF ( fbSetPosition.Done ) THEN
+			fbSetPosition.Execute := FALSE;
+			HomeState:= H_WRITE_LL;
+		ELSIF (fbSetPosition.Error) THEN
+			HomeState := H_ERROR;
+		END_IF
+
+	
+	H_WRITE_LL:
+	// Re Enable the Soft limits	
+		fbWriteParameter.ParameterNumber := MC_AxisParameter.AxisEnMinSoftPosLimit;//AxisEnMaxSoftPosLimit;// .AxisEnMinSoftPosLimit;
+		fbWriteParameter.Value := TRUE;
+		fbWriteParameter.Execute := TRUE;
+		if (fbWriteParameter.Done) THEN
+			fbWriteParameter.Execute := FALSE;
+			HomeState:= H_WRITE_HL; 
+		END_IF
+		
+	H_WRITE_HL:
+	// Re Enable the Soft limits	
+		fbWriteParameter.ParameterNumber := MC_AxisParameter.AxisEnMaxSoftPosLimit;
+		fbWriteParameter.Value := TRUE;
+		fbWriteParameter.Execute := TRUE;
+		if (fbWriteParameter.Done) THEN
+			fbWriteParameter.Execute := FALSE;
+			HomeState:= H_DONE; 
+		END_IF
+		
+	
+	H_ERROR:
+		//taken care of in the axis motion state machine
+	H_DONE:
+		//taken care of in the axis motion state machine
+		bIsHomed := TRUE;
+		HomeState:=H_READY;
+
+END_CASE
+
+// Move backward to fully closed
+fbMoveRel(
+	Axis:= Axis , 
+	Execute:= , 
+	Distance:= rHomingDistance , 
+	Velocity:= rHomingVelocity, 
+	Acceleration:= , 
+	Deceleration:= , 
+	Jerk:= , 
+	BufferMode:= MC_BlendingNext, 
+	Options:= , 
+	Done=> , 
+	Busy=> , 
+	Active=> , 
+	CommandAborted=> , 
+	Error=> , 
+	ErrorID=> );
+	
+// Set Encoder Position
+fbSetPosition(
+	Axis:= Axis , 
+	Execute:= , 
+	Position:= 0 , 
+	Mode:= FALSE, //Absolute
+	Options:= , 
+	Done=> , 
+	Busy=> , 
+	Error=> , 
+	ErrorID=> );
+	
+// Write Parameters
+fbWriteParameter(
+	Axis:= Axis , 
+	Execute:= , 
+	ParameterNumber:= , 
+	Value:= , 
+	Done=> , 
+	Busy=> , 
+	Error=> , 
+	ErrorID=> );
+
+	(*AXIS RESET*)
+fbReset(
+	Axis:= Axis, 
+	Execute:= , 
+	Done=> , 
+	Busy=> , 
+	Error=> , 
+	ErrorID=> );
+	
+If ( fbWriteParameter.Error) OR (fbSetPosition.Error)(* OR (fbMoveRel.Error) *)THEN
+	HomeState:= H_ERROR; 
+END_IF]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

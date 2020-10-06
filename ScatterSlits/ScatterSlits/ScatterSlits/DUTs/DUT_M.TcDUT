@@ -1,0 +1,15 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.12">
+  <DUT Name="DUT_M" Id="{bdda6269-310e-4126-835d-bd9c3b10550c}">
+    <Declaration><![CDATA[TYPE DUT_M :
+STRUCT
+	LimOut  At %I* : BOOL;
+LimIn At %I* : BOOL;
+Encoder At %I* : UINT;
+Enable: BOOL;
+END_STRUCT
+
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>
