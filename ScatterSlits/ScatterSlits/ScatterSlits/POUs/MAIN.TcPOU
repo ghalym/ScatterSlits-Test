@@ -39,8 +39,8 @@ END_VAR
 P1(
 	Axis:= Axis1 , 
 	Enable:= M1.Enable, 
-	Enable_Positive:=M1.LimIn, //FFW DI2
-	Enable_Negative:= M1.LimOut, 
+	Enable_Positive:=M1.LimIn AND M1.LimOut , //FFW DI2
+	Enable_Negative:= M1.LimOut AND M1.LimIn, 
 	Override:= , 
 	BufferMode:= , 
 	Options:= , 
